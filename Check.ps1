@@ -13,8 +13,10 @@ function Get-FirstInstallDate {
             try {
                 $props = Get-ItemProperty -Path $fullPath -ErrorAction Stop
 
-                if ($props.PSObject.Properties["Driver"] -or $props.PSObject.Properties["ConfigFlags"]) {
-
+                if (
+                    ($props.PSObject.Properties["Driver"] -or $props.PSObject.Properties["ConfigFlags"]) -and
+                    $props.Class -eq "System"
+                ) {
                     $deviceDesc   = $props.DeviceDesc -replace ".*?;", ""
                     $friendlyName = $props.FriendlyName
                     $hwid         = if ($props.HardwareID) { ($props.HardwareID | Select-Object -First 1) } else { "N/A" }
@@ -25,22 +27,20 @@ function Get-FirstInstallDate {
                     $dateKeys     = @("0065", "0064", "0066")
 
                     foreach ($dateKey in $dateKeys) {
-                        $fullDatePath = "$propsKeyPath\$dateKey"
                         try {
                             $regKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(
-                                $fullDatePath.Replace("HKLM:\", "")
+                                "$propsKeyPath\$dateKey".Replace("HKLM:\", "")
                             )
                             if ($regKey) {
-                                $data = $regKey.GetValue("(default)")
+                                $data = $regKey.GetValue("")
+                                $regKey.Close()
                                 if ($data -and $data.Length -ge 8) {
                                     $ft = [System.BitConverter]::ToInt64($data, 0)
                                     if ($ft -gt 0) {
                                         $firstInstall = [System.DateTime]::FromFileTimeUtc($ft).ToLocalTime()
-                                        $regKey.Close()
                                         break
                                     }
                                 }
-                                $regKey.Close()
                             }
                         } catch {}
                     }
@@ -62,7 +62,7 @@ function Get-FirstInstallDate {
     } catch {}
 }
 
-Write-Host "`n[*] Scansione dispositivi in corso..." -ForegroundColor Cyan
+Write-Host "`n[*] Scansione dispositivi di sistema in corso..." -ForegroundColor Cyan
 
 Get-FirstInstallDate -Path $regPath
 
@@ -71,10 +71,10 @@ $sorted = $script:results | Sort-Object {
     else { [DateTime]::ParseExact($_.PrimaConnessione, "dd/MM/yyyy HH:mm:ss", $null) }
 }
 
-Write-Host "[+] Trovati $($script:results.Count) dispositivi`n" -ForegroundColor Green
+Write-Host "[+] Trovati $($script:results.Count) dispositivi di sistema`n" -ForegroundColor Green
 
 $sorted | Format-Table -AutoSize -Property Nome, Produttore, PrimaConnessione, HardwareID
 
-$csvPath = "$env:USERPROFILE\Desktop\dispositivi_prima_connessione.csv"
+$csvPath = "$env:USERPROFILE\Desktop\dispositivi_sistema.csv"
 $sorted | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
 Write-Host "[+] Report esportato in: $csvPath" -ForegroundColor Green
