@@ -1,4 +1,5 @@
 $SYSTEM_CLASS_GUID = "{4d36e97d-e325-11ce-bfc1-08002be10318}"
+$INSTALLDATE_GUID = "{83da6326-97a6-4088-9453-a1923f573b29}"
 $results = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 Write-Host "`n[*] Scansione dispositivi di sistema in corso..." -ForegroundColor Cyan
@@ -8,33 +9,27 @@ $allKeys = Get-ChildItem -Path "HKLM:\SYSTEM\CurrentControlSet\Enum" -Recurse -E
 foreach ($key in $allKeys) {
     try {
         $props = Get-ItemProperty -Path $key.PSPath -ErrorAction Stop
-
         $isDevice = $props.PSObject.Properties["Driver"] -or $props.PSObject.Properties["ConfigFlags"]
         $isSystem = $props.ClassGuid -eq $SYSTEM_CLASS_GUID
-
         if (-not $isDevice -or -not $isSystem) { continue }
 
-        $deviceDesc   = if ($props.DeviceDesc)  { $props.DeviceDesc  -replace ".*?;", "" } else { "" }
-        $friendlyName = if ($props.FriendlyName) { $props.FriendlyName }                   else { "" }
+        $deviceDesc   = if ($props.DeviceDesc)   { $props.DeviceDesc -replace ".*?;", "" } else { "" }
+        $friendlyName = if ($props.FriendlyName) { $props.FriendlyName } else { "" }
         $hwid         = if ($props.HardwareID)   { $props.HardwareID | Select-Object -First 1 } else { "N/A" }
-        $mfg          = if ($props.Mfg)          { $props.Mfg -replace ".*?;", "" }         else { "N/A" }
+        $mfg          = if ($props.Mfg)          { $props.Mfg -replace ".*?;", "" } else { "N/A" }
         $displayName  = if ($friendlyName) { $friendlyName } elseif ($deviceDesc) { $deviceDesc } else { "Sconosciuto" }
 
         $firstInstall = $null
+        $propertiesPath = Join-Path $key.PSPath "Properties\$INSTALLDATE_GUID"
 
-        # Tentativo 1: leggi il FILETIME dal sottochiave Properties
-        $regSubPath = $key.PSPath `
-            .Replace("Microsoft.PowerShell.Core\Registry::", "") `
-            .Replace("HKEY_LOCAL_MACHINE\", "")
-
-        foreach ($dateKey in @("0065", "0064", "0066")) {
-            try {
-                $propKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(
-                    "$regSubPath\Properties\{83da6326-97a6-4088-9453-a1923f573b29}\$dateKey"
-                )
-                if ($propKey) {
-                    $data = $propKey.GetValue("")
-                    $propKey.Close()
+        if (Test-Path $propertiesPath) {
+            $dateSubKeys = Get-ChildItem -Path $propertiesPath -ErrorAction SilentlyContinue
+            foreach ($sub in $dateSubKeys) {
+                try {
+                    $data = (Get-ItemProperty -Path $sub.PSPath -Name "(default)" -ErrorAction SilentlyContinue)."(default)"
+                    if (-not $data) {
+                        $data = Get-ItemPropertyValue -Path $sub.PSPath -Name "" -ErrorAction SilentlyContinue
+                    }
                     if ($data -and $data.Length -ge 8) {
                         $ft = [System.BitConverter]::ToInt64($data, 0)
                         if ($ft -gt 0) {
@@ -42,18 +37,13 @@ foreach ($key in $allKeys) {
                             break
                         }
                     }
-                }
-            } catch {}
+                } catch {}
+            }
         }
 
-        # Fallback: LastWriteTime della chiave registro (quando Windows ha installato il device)
         if (-not $firstInstall) {
             try {
-                $rawKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($regSubPath)
-                if ($rawKey) {
-                    $firstInstall = $rawKey.LastWriteTime
-                    $rawKey.Close()
-                }
+                $firstInstall = (Get-Item -Path $key.PSPath -ErrorAction Stop).LastWriteTime
             } catch {}
         }
 
@@ -63,7 +53,6 @@ foreach ($key in $allKeys) {
             HardwareID       = $hwid
             PrimaConnessione = if ($firstInstall) { $firstInstall.ToString("dd/MM/yyyy HH:mm:ss") } else { "N/D" }
         })
-
     } catch {}
 }
 
