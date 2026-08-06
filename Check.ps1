@@ -1,5 +1,5 @@
 $regPath = "HKLM:\SYSTEM\CurrentControlSet\Enum"
-$results = @()
+$script:results = @()
 
 function Get-FirstInstallDate {
     param([string]$Path)
@@ -47,7 +47,7 @@ function Get-FirstInstallDate {
 
                     $displayName = if ($friendlyName) { $friendlyName } elseif ($deviceDesc) { $deviceDesc } else { "Dispositivo sconosciuto" }
 
-                    $results += [PSCustomObject]@{
+                    $script:results += [PSCustomObject]@{
                         Nome             = $displayName
                         Produttore       = if ($mfg) { $mfg } else { "N/A" }
                         HardwareID       = $hwid
@@ -66,15 +66,15 @@ Write-Host "`n[*] Scansione dispositivi in corso..." -ForegroundColor Cyan
 
 Get-FirstInstallDate -Path $regPath
 
-$sorted = $results | Sort-Object {
+$sorted = $script:results | Sort-Object {
     if ($_.PrimaConnessione -eq "N/D") { [DateTime]::MaxValue }
     else { [DateTime]::ParseExact($_.PrimaConnessione, "dd/MM/yyyy HH:mm:ss", $null) }
 }
 
-Write-Host "[+] Trovati $($results.Count) dispositivi`n" -ForegroundColor Green
+Write-Host "[+] Trovati $($script:results.Count) dispositivi`n" -ForegroundColor Green
 
 $sorted | Format-Table -AutoSize -Property Nome, Produttore, PrimaConnessione, HardwareID
 
-$csvPath = Join-Path $PSScriptRoot "dispositivi_prima_connessione.csv"
+$csvPath = "$env:USERPROFILE\Desktop\dispositivi_prima_connessione.csv"
 $sorted | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
 Write-Host "[+] Report esportato in: $csvPath" -ForegroundColor Green
