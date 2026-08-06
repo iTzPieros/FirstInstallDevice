@@ -26,10 +26,8 @@ foreach ($key in $allKeys) {
             $dateSubKeys = Get-ChildItem -Path $propertiesPath -ErrorAction SilentlyContinue
             foreach ($sub in $dateSubKeys) {
                 try {
-                    $data = (Get-ItemProperty -Path $sub.PSPath -Name "(default)" -ErrorAction SilentlyContinue)."(default)"
-                    if (-not $data) {
-                        $data = Get-ItemPropertyValue -Path $sub.PSPath -Name "" -ErrorAction SilentlyContinue
-                    }
+                    $regObj = Get-Item -LiteralPath $sub.PSPath -ErrorAction Stop
+                    $data = $regObj.GetValue($null)
                     if ($data -and $data.Length -ge 8) {
                         $ft = [System.BitConverter]::ToInt64($data, 0)
                         if ($ft -gt 0) {
@@ -39,12 +37,6 @@ foreach ($key in $allKeys) {
                     }
                 } catch {}
             }
-        }
-
-        if (-not $firstInstall) {
-            try {
-                $firstInstall = (Get-Item -Path $key.PSPath -ErrorAction Stop).LastWriteTime
-            } catch {}
         }
 
         $results.Add([PSCustomObject]@{
