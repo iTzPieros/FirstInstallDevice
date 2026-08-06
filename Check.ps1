@@ -14,25 +14,27 @@ foreach ($key in $allKeys) {
 
         if (-not $isDevice -or -not $isSystem) { continue }
 
-        $deviceDesc   = if ($props.DeviceDesc)   { $props.DeviceDesc   -replace ".*?;", "" } else { "" }
-        $friendlyName = if ($props.FriendlyName)  { $props.FriendlyName }                   else { "" }
-        $hwid         = if ($props.HardwareID)    { $props.HardwareID | Select-Object -First 1 } else { "N/A" }
-        $mfg          = if ($props.Mfg)           { $props.Mfg -replace ".*?;", "" }         else { "N/A" }
-        $displayName  = if ($friendlyName)         { $friendlyName }                          elseif ($deviceDesc) { $deviceDesc } else { "Sconosciuto" }
+        $deviceDesc   = if ($props.DeviceDesc)  { $props.DeviceDesc  -replace ".*?;", "" } else { "" }
+        $friendlyName = if ($props.FriendlyName) { $props.FriendlyName }                   else { "" }
+        $hwid         = if ($props.HardwareID)   { $props.HardwareID | Select-Object -First 1 } else { "N/A" }
+        $mfg          = if ($props.Mfg)          { $props.Mfg -replace ".*?;", "" }         else { "N/A" }
+        $displayName  = if ($friendlyName) { $friendlyName } elseif ($deviceDesc) { $deviceDesc } else { "Sconosciuto" }
 
         $firstInstall = $null
-        $basePath = $key.PSPath.Replace("Microsoft.PowerShell.Core\Registry::", "")
-        $dateKeys = @("0065", "0064", "0066")
 
-        foreach ($dateKey in $dateKeys) {
+        # Tentativo 1: leggi il FILETIME dal sottochiave Properties
+        $regSubPath = $key.PSPath `
+            .Replace("Microsoft.PowerShell.Core\Registry::", "") `
+            .Replace("HKEY_LOCAL_MACHINE\", "")
+
+        foreach ($dateKey in @("0065", "0064", "0066")) {
             try {
-                $subPath = "$basePath\Properties\{83da6326-97a6-4088-9453-a1923f573b29}\$dateKey"
-                $regKey  = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(
-                    $subPath.Replace("HKEY_LOCAL_MACHINE\", "")
+                $propKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(
+                    "$regSubPath\Properties\{83da6326-97a6-4088-9453-a1923f573b29}\$dateKey"
                 )
-                if ($regKey) {
-                    $data = $regKey.GetValue("")
-                    $regKey.Close()
+                if ($propKey) {
+                    $data = $propKey.GetValue("")
+                    $propKey.Close()
                     if ($data -and $data.Length -ge 8) {
                         $ft = [System.BitConverter]::ToInt64($data, 0)
                         if ($ft -gt 0) {
@@ -40,6 +42,17 @@ foreach ($key in $allKeys) {
                             break
                         }
                     }
+                }
+            } catch {}
+        }
+
+        # Fallback: LastWriteTime della chiave registro (quando Windows ha installato il device)
+        if (-not $firstInstall) {
+            try {
+                $rawKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($regSubPath)
+                if ($rawKey) {
+                    $firstInstall = $rawKey.LastWriteTime
+                    $rawKey.Close()
                 }
             } catch {}
         }
