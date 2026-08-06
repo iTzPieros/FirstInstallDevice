@@ -1,51 +1,32 @@
-$SYSTEM_CLASS_GUID = "{4d36e97d-e325-11ce-bfc1-08002be10318}"
-$INSTALLDATE_GUID = "{83da6326-97a6-4088-9453-a1923f573b29}"
 $results = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 Write-Host "`n[*] Scansione dispositivi di sistema in corso..." -ForegroundColor Cyan
 
-$allKeys = Get-ChildItem -Path "HKLM:\SYSTEM\CurrentControlSet\Enum" -Recurse -ErrorAction SilentlyContinue
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "[!] ATTENZIONE: non sei amministratore, i risultati saranno tutti N/D" -ForegroundColor Red
+}
 
-foreach ($key in $allKeys) {
-    try {
-        $props = Get-ItemProperty -Path $key.PSPath -ErrorAction Stop
-        $isDevice = $props.PSObject.Properties["Driver"] -or $props.PSObject.Properties["ConfigFlags"]
-        $isSystem = $props.ClassGuid -eq $SYSTEM_CLASS_GUID
-        if (-not $isDevice -or -not $isSystem) { continue }
+$devices = Get-PnpDevice -Class System -ErrorAction SilentlyContinue
 
-        $deviceDesc   = if ($props.DeviceDesc)   { $props.DeviceDesc -replace ".*?;", "" } else { "" }
-        $friendlyName = if ($props.FriendlyName) { $props.FriendlyName } else { "" }
-        $hwid         = if ($props.HardwareID)   { $props.HardwareID | Select-Object -First 1 } else { "N/A" }
-        $mfg          = if ($props.Mfg)          { $props.Mfg -replace ".*?;", "" } else { "N/A" }
-        $displayName  = if ($friendlyName) { $friendlyName } elseif ($deviceDesc) { $deviceDesc } else { "Sconosciuto" }
+foreach ($dev in $devices) {
+    $installProp = Get-PnpDeviceProperty -InstanceId $dev.InstanceId -KeyName 'DEVPKEY_Device_InstallDate' -ErrorAction SilentlyContinue
+    $mfgProp     = Get-PnpDeviceProperty -InstanceId $dev.InstanceId -KeyName 'DEVPKEY_Device_Manufacturer' -ErrorAction SilentlyContinue
 
-        $firstInstall = $null
-        $propertiesPath = Join-Path $key.PSPath "Properties\$INSTALLDATE_GUID"
+    $firstInstall = "N/D"
+    if ($installProp -and $installProp.Data -and $installProp.Data -ne [DateTime]::MinValue) {
+        $firstInstall = $installProp.Data.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss")
+    }
 
-        if (Test-Path $propertiesPath) {
-            $dateSubKeys = Get-ChildItem -Path $propertiesPath -ErrorAction SilentlyContinue
-            foreach ($sub in $dateSubKeys) {
-                try {
-                    $regObj = Get-Item -LiteralPath $sub.PSPath -ErrorAction Stop
-                    $data = $regObj.GetValue($null)
-                    if ($data -and $data.Length -ge 8) {
-                        $ft = [System.BitConverter]::ToInt64($data, 0)
-                        if ($ft -gt 0) {
-                            $firstInstall = [System.DateTime]::FromFileTimeUtc($ft).ToLocalTime()
-                            break
-                        }
-                    }
-                } catch {}
-            }
-        }
+    $mfg  = if ($mfgProp -and $mfgProp.Data) { $mfgProp.Data } else { "N/D" }
+    $hwid = if ($dev.HardwareID) { $dev.HardwareID | Select-Object -First 1 } else { "N/A" }
 
-        $results.Add([PSCustomObject]@{
-            Nome             = $displayName
-            Produttore       = $mfg
-            HardwareID       = $hwid
-            PrimaConnessione = if ($firstInstall) { $firstInstall.ToString("dd/MM/yyyy HH:mm:ss") } else { "N/D" }
-        })
-    } catch {}
+    $results.Add([PSCustomObject]@{
+        Nome             = $dev.FriendlyName
+        Produttore       = $mfg
+        HardwareID       = $hwid
+        PrimaConnessione = $firstInstall
+    })
 }
 
 $sorted = $results | Sort-Object {
@@ -55,6 +36,9 @@ $sorted = $results | Sort-Object {
 
 Write-Host "[+] Trovati $($results.Count) dispositivi di sistema`n" -ForegroundColor Green
 $sorted | Format-Table -AutoSize -Property Nome, Produttore, PrimaConnessione, HardwareID
+
+$conValidi = ($sorted | Where-Object { $_.PrimaConnessione -ne "N/D" }).Count
+Write-Host "[i] Dispositivi con data valida: $conValidi su $($results.Count)" -ForegroundColor Yellow
 
 $csvPath = "$env:USERPROFILE\Desktop\dispositivi_sistema.csv"
 $sorted | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
